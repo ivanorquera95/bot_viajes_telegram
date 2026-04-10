@@ -11,6 +11,7 @@ from datetime import datetime
 
 client = OpenAI(KEY_OPENAI)
 conversaciones = {}
+historial = {}
 limite_audios_por_dia = 2
 uso_usuarios = {}
 #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -20,13 +21,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nombre = usuario.first_name or ""
     await update.message.reply_text(
                                     f"¡Hola {f'{nombre}' if nombre else ''}! ¿Cómo estás?\n"
-                                    "Soy tu asistente de viajes\n\n"
+                                    "Soy tu asistente de viajes 🌍\n\n"
                                     "Podes enviarme mensajes de texto o audios para obtener información sobre:\n"
                                     "• Alojamientos\n"
                                     "• Destinos y ciudades\n"
                                     "• Atracciones\n\n"
                                     "Para optimizar los recursos que dispongo, los audios tienen un límite diario de 2 por usuario con una duración menor a 1 minuto.\n"
                                     "Podés seguir consultando por texto sin problema alguno 😊\n\n"
+                                    "Podés escribir 'reset' para borrar la conversación.\n\n"
                                     "¿En qué puedo ayudarte?"
                                 )
 
@@ -35,8 +37,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def gestion_de_consulta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
+    
     chat_id = update.message.chat_id
     await update.message.reply_chat_action("typing")
+    
+    if update.message.text and "reset" in update.message.text.lower():
+        historial[chat_id] = []
+        await update.message.reply_text("Conversación reiniciada.")
+        return
+    
+    if chat_id not in historial:
+        historial[chat_id] = []
     
     if update.message.voice:
         try:
@@ -75,6 +86,7 @@ async def gestion_de_consulta(update: Update, context: ContextTypes.DEFAULT_TYPE
                     file=audio_file
                 )
             texto = transcription.text.strip()
+            
         except Exception as e:
             print("Error procesando el audio:", e)
             await update.message.reply_text("Ocurrió un error procesando el audio. ¿Podés repetirlo por favor?")
@@ -88,11 +100,11 @@ async def gestion_de_consulta(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("No reconozco el formato del mensaje")
         return
     
+    historial[chat_id].append({"role": "user","content": texto})
+    
     if chat_id not in conversaciones:
-        conversaciones[chat_id] = {
-            "estado": "nuevo",
-            "datos": {},
-        }
+        conversaciones[chat_id] = {"estado": "nuevo","datos": {},}
+        
     contexto = conversaciones[chat_id]
     
     analisis, contexto = analizar_mensaje(texto, contexto)
@@ -103,11 +115,12 @@ async def gestion_de_consulta(update: Update, context: ContextTypes.DEFAULT_TYPE
             datos_previos[clave] = valor
     contexto["datos"] = datos_previos
 
-    if analisis:
-        respuesta, contexto = responder_con_ia(analisis, contexto)
-    else:
-        respuesta = "No entendí bien tu consulta. ¿Podrías explicarlo de otra forma?"
-        contexto["estado"] = "en_progreso"
+    respuesta, contexto = responder_con_ia(contexto["datos"], contexto, historial[chat_id])
+    historial[chat_id].append({
+        "role": "assistant",
+        "content": respuesta
+    })
+
     await update.message.reply_text(respuesta)
     
 #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
